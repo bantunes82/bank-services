@@ -1,29 +1,28 @@
 package com.bantunes82.ledger.service;
 
-import com.bantunes82.ledger.enums.EventType;
 import com.bantunes82.ledger.dataaccessobject.AccountRepository;
 import com.bantunes82.ledger.dataaccessobject.AccountTransactionRepository;
 import com.bantunes82.ledger.dataaccessobject.OutboxRepository;
 import com.bantunes82.ledger.domainobject.AccountDO;
 import com.bantunes82.ledger.domainobject.AccountTransactionDO;
-import com.bantunes82.ledger.domainobject.OutboxDO;
+import com.bantunes82.ledger.domainobject.OutboxEventDO;
+import com.bantunes82.ledger.enums.EventType;
 import com.bantunes82.ledger.exception.BusinessException;
+
+import tools.jackson.databind.json.JsonMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import  tools.jackson.databind.json.JsonMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.validation.annotation.Validated;
 
 import java.math.BigDecimal;
+import java.util.Optional;
 import java.util.UUID;
 
-import static com.bantunes82.ledger.exception.BusinessException.ErrorCode.ACCOUNT_NOT_FOUND;
+import static com.bantunes82.ledger.exception.BusinessException.ErrorCode.*;
 
 @Service
-@Validated
-@Transactional(propagation = Propagation.SUPPORTS)
 public class TransactionService {
 
     private final AccountRepository accountRepository;
@@ -34,44 +33,91 @@ public class TransactionService {
     private final Logger logger = LoggerFactory.getLogger(TransactionService.class);
 
     public TransactionService(AccountRepository accountRepository,
-                              AccountTransactionRepository accountTransactionRepository,
-                              OutboxRepository outboxRepository,
-                              JsonMapper jsonMapper) {
+            AccountTransactionRepository accountTransactionRepository,
+            OutboxRepository outboxRepository,
+            JsonMapper jsonMapper) {
         this.accountRepository = accountRepository;
         this.accountTransactionRepository = accountTransactionRepository;
         this.outboxRepository = outboxRepository;
         this.jsonMapper = jsonMapper;
     }
 
-    @Transactional(propagation = Propagation.REQUIRED)
-    public AccountTransactionDO transferMoney(UUID fromAccountUuid, UUID toAccountUuid, BigDecimal amount) {
-        AccountDO fromAccountDO = findAccountChecked(fromAccountUuid);
-        AccountDO toAccountDO = findAccountChecked(toAccountUuid);
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
+    public AccountTransactionDO transferMoney(UUID fromAccountUuid, UUID toAccountUuid, BigDecimal amount,
+            String idempotencyKey, String description) {
+        // 1. Basic Validation
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("Amount must be positive", INVALID_AMOUNT);
+        }
+        if (fromAccountUuid.equals(toAccountUuid)) {
+            throw new BusinessException("Cannot transfer to the same account", SAME_ACCOUNT_TRANSFER);
+        }
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new BusinessException("Idempotency key is required", IDEMPOTENCY_KEY_REQUIRED);
+        }
 
-        //TODO: add business validations like sufficient balance, etc.
+        // 2. Idempotency Check
+        Optional<AccountTransactionDO> existingTx = accountTransactionRepository.findByIdempotencyKey(idempotencyKey);
+        if (existingTx.isPresent()) {
+            logger.info("Transaction with idempotency key {} already exists. Returning existing one.", idempotencyKey);
+            return existingTx.get();
+        }
 
-        AccountTransactionDO accountTransactionDO = new AccountTransactionDO();
-        accountTransactionDO.setDescription("Transfer from " + fromAccountDO.getName() + " to " + toAccountDO.getName());
-        accountTransactionDO.setAmount(amount);
-        accountTransactionDO.setDebitAccount(fromAccountDO);
-        accountTransactionDO.setCreditAccount(toAccountDO);
-        AccountTransactionDO savedTransaction = accountTransactionRepository.save(accountTransactionDO);
+        // 3. Lock Accounts (Deadlock Prevention: Sort by UUID)
+        UUID firstLock = fromAccountUuid.compareTo(toAccountUuid) < 0 ? fromAccountUuid : toAccountUuid;
+        UUID secondLock = fromAccountUuid.compareTo(toAccountUuid) < 0 ? toAccountUuid : fromAccountUuid;
 
-        logger.info("Saved transaction: {}", savedTransaction);
+        AccountDO fromAccountDO = null;
+        AccountDO toAccountDO = null;
 
-        String payload = jsonMapper.writeValueAsString(savedTransaction);
-        OutboxDO outboxDO = new OutboxDO();
-        outboxDO.setEventType(EventType.ACCOUNT_TRANSACTION_CREATED);
-        outboxDO.setPayload(payload);
+        // Lock first
+        if (firstLock.equals(fromAccountUuid)) {
+            fromAccountDO = accountRepository.findByIdForUpdate(firstLock)
+                    .orElseThrow(() -> new BusinessException("Debit account not found", ACCOUNT_NOT_FOUND, firstLock));
+            toAccountDO = accountRepository.findByIdForUpdate(secondLock)
+                    .orElseThrow(
+                            () -> new BusinessException("Credit account not found", ACCOUNT_NOT_FOUND, secondLock));
+        } else {
+            toAccountDO = accountRepository.findByIdForUpdate(firstLock)
+                    .orElseThrow(() -> new BusinessException("Credit account not found", ACCOUNT_NOT_FOUND, firstLock));
+            fromAccountDO = accountRepository.findByIdForUpdate(secondLock)
+                    .orElseThrow(() -> new BusinessException("Debit account not found", ACCOUNT_NOT_FOUND, secondLock));
+        }
 
-        outboxRepository.save(outboxDO);
+        // 4. Business Validation (Sufficient Funds)
+        if (fromAccountDO.getBalance().compareTo(amount) < 0) {
+            throw new BusinessException("Insufficient funds", INSUFFICIENT_FUNDS);
+        }
 
-        logger.info("Saved outbox: {}", outboxDO);
+        // 5. Execute Transfer
+        fromAccountDO.setBalance(fromAccountDO.getBalance().subtract(amount));
+        toAccountDO.setBalance(toAccountDO.getBalance().add(amount));
 
+        accountRepository.save(fromAccountDO);
+        accountRepository.save(toAccountDO);
+
+        // 6. Create Ledger Transaction
+        AccountTransactionDO transactionDO = new AccountTransactionDO();
+        transactionDO.setDebitAccountDO(fromAccountDO);
+        transactionDO.setCreditAccountDO(toAccountDO);
+        transactionDO.setAmount(amount);
+        transactionDO.setCurrency(fromAccountDO.getCurrency()); // Assuming same currency
+        transactionDO.setIdempotencyKey(idempotencyKey);
+        transactionDO.setDescription(description);
+
+        AccountTransactionDO savedTransaction = accountTransactionRepository.save(transactionDO);
+
+        // 7. Create Outbox Event
+        OutboxEventDO outboxEventDO = new OutboxEventDO();
+        outboxEventDO.setAggregateId(savedTransaction.getId());
+        outboxEventDO.setEventType(EventType.ACCOUNT_TRANSACTION_CREATED);
+        // Payload
+        String payload = jsonMapper.writeValueAsString(savedTransaction.toString());
+        outboxEventDO.setPayload(payload);
+
+        outboxRepository.save(outboxEventDO);
+
+        logger.info("Transaction processed successfully: {}", savedTransaction.getId());
         return savedTransaction;
-    }
-
-    private AccountDO findAccountChecked(UUID accountId) {
-        return accountRepository.findById(accountId).orElseThrow(() -> new BusinessException("Could not find account with id: " + accountId, ACCOUNT_NOT_FOUND, accountId));
     }
 }

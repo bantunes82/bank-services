@@ -11,36 +11,44 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.NotNull;
-
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.UUID;
 
 @Entity
-@Table(name = "outbox")
-public class OutboxDO {
+@Table(name = "outbox_event")
+public class OutboxEventDO {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
     @NotNull
-    @Column(nullable = false)
+    @Column(name = "aggregate_id", nullable = false)
+    private UUID aggregateId;
+
+    @NotNull
+    @Column(name = "event_type", nullable = false)
     @Enumerated(EnumType.STRING)
     private EventType eventType;
 
     @NotNull
-    @Column(nullable = false, columnDefinition = "TEXT")
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "JSONB", nullable = false)
     private String payload;
 
     @NotNull
-    @Column(nullable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     @PrePersist
     private void onPrePersist() {
         this.createdAt = LocalDateTime.now();
     }
+
+    // Getters and Setters
 
     public UUID getId() {
         return id;
@@ -50,52 +58,30 @@ public class OutboxDO {
         this.id = id;
     }
 
-    public EventType getEventType() {
-        return eventType;
+    public void setAggregateId(UUID aggregateId) {
+        this.aggregateId = aggregateId;
     }
 
     public void setEventType(EventType eventType) {
         this.eventType = eventType;
     }
 
-    public String getPayload() {
-        return payload;
-    }
-
     public void setPayload(String payload) {
         this.payload = payload;
     }
 
-    public LocalDateTime getCreatedAt() {
-        return createdAt;
-    }
-
-    public void setCreatedAt(LocalDateTime createdAt) {
-        this.createdAt = createdAt;
-    }
-
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        OutboxDO that = (OutboxDO) o;
-        return Objects.equals(id, that.id) &&
-                Objects.equals(eventType, that.eventType) &&
-                Objects.equals(createdAt, that.createdAt);
+        if (this == o)
+            return true;
+        if (o == null || getClass() != o.getClass())
+            return false;
+        OutboxEventDO outboxEventDO = (OutboxEventDO) o;
+        return Objects.equals(id, outboxEventDO.id);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id, eventType, createdAt);
-    }
-
-    @Override
-    public String toString() {
-        return "OutboxDO{"
-                + "id=" + id
-                + ", eventType='" + eventType + "'"
-                + ", payload='" + payload + "'"
-                + ", createdAt=" + createdAt +
-                '}';
+        return Objects.hashCode(id);
     }
 }

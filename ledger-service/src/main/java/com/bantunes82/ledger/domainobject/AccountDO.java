@@ -8,7 +8,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import jakarta.validation.constraints.NotNull;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.UUID;
@@ -26,12 +28,43 @@ public class AccountDO {
     private String name;
 
     @NotNull
+    @Column(nullable = false, precision = 20, scale = 4)
+    private BigDecimal balance;
+
+    @NotNull
+    @Column(nullable = false, length = 3)
+    private String currency;
+
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
+    @NotNull
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
     @NotNull
     @Column(nullable = false)
     private LocalDateTime updatedAt;
+
+    @PrePersist
+    private void onPrePersist() {
+        this.createdAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
+        if (this.balance == null) {
+            this.balance = BigDecimal.ZERO;
+        }
+        if (this.currency == null) {
+            this.currency = "USD";
+        }
+    }
+
+    @PreUpdate
+    private void onPreUpdate() {
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    // Getters and Setters
 
     public UUID getId() {
         return id;
@@ -49,36 +82,24 @@ public class AccountDO {
         this.name = name;
     }
 
-    public LocalDateTime getCreatedAt() {
-        return createdAt;
+    public BigDecimal getBalance() {
+        return balance;
     }
 
-    public void setCreatedAt(LocalDateTime createdAt) {
-        this.createdAt = createdAt;
+    public void setBalance(BigDecimal balance) {
+        this.balance = balance;
     }
 
-    public LocalDateTime getUpdatedAt() {
-        return updatedAt;
-    }
-
-    public void setUpdatedAt(LocalDateTime updatedAt) {
-        this.updatedAt = updatedAt;
-    }
-
-    @PrePersist
-    private void onPrePersist() {
-        this.createdAt = LocalDateTime.now();
-        this.updatedAt = LocalDateTime.now();
-    }
-
-    @PreUpdate
-    private void onPreUpdate() {
-        this.updatedAt = LocalDateTime.now();
+    public String getCurrency() {
+        return currency;
     }
 
     @Override
     public boolean equals(Object o) {
-        if (o == null || getClass() != o.getClass()) return false;
+        if (this == o)
+            return true;
+        if (o == null || getClass() != o.getClass())
+            return false;
         AccountDO accountDO = (AccountDO) o;
         return Objects.equals(id, accountDO.id);
     }
@@ -92,7 +113,10 @@ public class AccountDO {
     public String toString() {
         return "AccountDO{" +
                 "id=" + id +
-                ", name='" + name + "'" +
+                ", name='" + name + '\'' +
+                ", balance=" + balance +
+                ", currency='" + currency + '\'' +
+                ", version=" + version +
                 ", createdAt=" + createdAt +
                 ", updatedAt=" + updatedAt +
                 '}';

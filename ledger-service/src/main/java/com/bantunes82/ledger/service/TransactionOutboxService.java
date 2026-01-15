@@ -27,7 +27,7 @@ public class TransactionOutboxService {
     }
 
     public void processDebeziumEvent(Map<String, Object> eventPayload) {
-        logger.debug("Received Debezium event payload: {}", eventPayload);
+        logger.info("Received Debezium event payload: {}", eventPayload);
 
         if (EventType.ACCOUNT_TRANSACTION_CREATED.name().equals(eventPayload.get("event_type"))) {
             String payloadAsString = jsonMapper.writeValueAsString(eventPayload);

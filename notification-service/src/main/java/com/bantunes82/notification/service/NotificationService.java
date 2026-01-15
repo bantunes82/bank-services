@@ -12,6 +12,6 @@ public class NotificationService {
 
     @KafkaListener(topics = "${kafka.ledger.topic}", groupId = "${kafka.ledger.group-id}")
     public void sendNotification(String message) {
-        logger.info("Sending notification: {}", message);
+        logger.info("Receiving the  notification: {}", message);
     }
 }

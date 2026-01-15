@@ -11,12 +11,6 @@ public class BusinessException extends RuntimeException {
         this.errorCode = errorCode;
     }
 
-    public BusinessException(String message, Throwable cause, ErrorCode errorCode, Object... params) {
-        super(message, cause);
-        this.params = params;
-        this.errorCode = errorCode;
-    }
-
     public ErrorCode getErrorCode() {
         return errorCode;
     }
@@ -28,10 +22,11 @@ public class BusinessException extends RuntimeException {
     public enum ErrorCode {
         GENERAL,
         ERROR_TO_PERSIST,
-        ACCOUNT_NOT_FOUND
+        ACCOUNT_NOT_FOUND,
+        INSUFFICIENT_FUNDS,
+        SAME_ACCOUNT_TRANSFER,
+        INVALID_AMOUNT,
+        IDEMPOTENCY_KEY_REQUIRED,
+        TRANSACTION_ALREADY_PROCESSED
     }
-
-
-
 }
-

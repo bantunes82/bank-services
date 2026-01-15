@@ -9,6 +9,9 @@
 
 /ledger-service/offset.dat
 /ledger-service/.mvn
+/ledger-service/target
 /notification-service/.mvn
+/notification-service/target
 
 .idea/
+/.vscode/settings.json

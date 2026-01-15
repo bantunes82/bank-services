@@ -53,7 +53,7 @@ public class DebeziumComponent {
     }
 
     private void handleEvent(ChangeEvent<String, String> event) {
-        logger.debug("Received event: {}", event);
+        logger.info("Received event: {}", event);
 
         JsonNode eventNode = jsonMapper.readTree(event.value());
 

@@ -23,7 +23,7 @@ import static org.springframework.http.MediaType.APPLICATION_JSON_VALUE;
 @RequestMapping(value = "/api", produces = APPLICATION_JSON_VALUE, consumes = APPLICATION_JSON_VALUE)
 public class TransactionResource {
 
-    private Logger log = LoggerFactory.getLogger(TransactionResource.class);
+    private final Logger log = LoggerFactory.getLogger(TransactionResource.class);
 
     private final TransactionService transactionService;
 
@@ -31,9 +31,14 @@ public class TransactionResource {
         this.transactionService = transactionService;
     }
 
-    @PostMapping(value = "/{version}/transactions", version="1.0")
+    @PostMapping(value = "/{version}/transactions")
     public ResponseEntity<Void> createTransaction(@Valid @RequestBody TransactionDTO transactionDTO) {
-        AccountTransactionDO accountTransactionDO = transactionService.transferMoney(transactionDTO.debitAccountId(), transactionDTO.creditAccountId(), transactionDTO.amount());
+        AccountTransactionDO accountTransactionDO = transactionService.transferMoney(
+                transactionDTO.debitAccountId(),
+                transactionDTO.creditAccountId(),
+                transactionDTO.amount(),
+                transactionDTO.idempotencyKey(),
+                transactionDTO.description());
 
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}")
@@ -43,5 +48,4 @@ public class TransactionResource {
         log.debug("New transaction created with URI {}", location);
         return ResponseEntity.created(location).build();
     }
-
 }

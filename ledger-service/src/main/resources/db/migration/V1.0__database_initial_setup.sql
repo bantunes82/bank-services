@@ -1,79 +1,54 @@
-CREATE TABLE account(
+-- Optimized Schema for 1000 TPS Ledger Service
+
+-- 1. Accounts Table with Balance
+-- We store balance directly to avoid expensive summation on read
+CREATE TABLE account (
                          id UUID PRIMARY KEY,
                          name VARCHAR(256) NOT NULL,
-                         created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                         updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+                         balance NUMERIC(20, 4) NOT NULL DEFAULT 0.0000 CHECK (balance >= 0), -- Prevent overdrafts at DB level if desired
+                         currency VARCHAR(3) NOT NULL DEFAULT 'USD',
+                         version BIGINT NOT NULL DEFAULT 1, -- Optimistic locking support
+                         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE account_transaction(
-                        id UUID PRIMARY KEY,
-                        description VARCHAR(1024) NOT NULL,
-                        amount NUMERIC(20, 2) NOT NULL CHECK (amount > 0.0),
-                        credit_account_id UUID NOT NULL REFERENCES account(id) ON DELETE RESTRICT,
-                        debit_account_id UUID NOT NULL REFERENCES account(id) ON DELETE RESTRICT,
-                        created_at TIMESTAMP WITH TIME ZONE NOT NULL
+-- 2. Account Transaction (Immutable Audit Log)
+-- Represents the successful movement of funds
+CREATE TABLE account_transaction (
+                                    id UUID PRIMARY KEY,
+                                    amount NUMERIC(20, 4) NOT NULL CHECK (amount > 0),
+                                    currency VARCHAR(3) NOT NULL,
+                                    debit_account_id UUID NOT NULL REFERENCES account(id),
+                                    credit_account_id UUID NOT NULL REFERENCES account(id),
+                                    description VARCHAR(1024),
+                                    idempotency_key VARCHAR(255) NOT NULL, -- critical for avoiding double-processing
+                                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX ON account_transaction(credit_account_id);
-CREATE INDEX ON account_transaction(debit_account_id);
-
-CREATE VIEW entry(
-                            account_id,
-                            account_transaction_id,
-                            amount,
-                            created_at
-    ) AS
-SELECT
-    account_transaction.credit_account_id,
-    account_transaction.id,
-    account_transaction.amount,
-    account_transaction.created_at
-FROM
-    account_transaction
-UNION ALL
-SELECT
-    account_transaction.debit_account_id,
-    account_transaction.id,
-    (0.0 - account_transaction.amount),
-    account_transaction.created_at
-FROM
-    account_transaction;
+-- Unique index for Idempotency
+CREATE UNIQUE INDEX idx_account_transaction_idempotency ON account_transaction(idempotency_key);
+CREATE INDEX idx_account_transaction_debit_acc ON account_transaction(debit_account_id);
+CREATE INDEX idx_account_transaction_credit_acc ON account_transaction(credit_account_id);
 
 
-CREATE MATERIALIZED VIEW account_balances(
-    account_id,
-    balance
-    ) AS
-SELECT
-    account.id,
-    COALESCE(sum(entry.amount), 0.0)
-FROM
-    account
-        LEFT OUTER JOIN entry
-                        ON account.id = entry.account_id
-GROUP BY account.id;
+-- 3. Outbox Table for Reliable Events
+CREATE TABLE outbox_event (
+                              id UUID PRIMARY KEY,
+                              aggregate_id UUID NOT NULL, -- Refers to account_transaction.id
+                              event_type VARCHAR(255) NOT NULL,
+                              payload JSONB NOT NULL,
+                              created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
-CREATE UNIQUE INDEX ON account_balances(account_id);
 
-CREATE FUNCTION update_balances() RETURNS TRIGGER AS $$
-BEGIN
-    REFRESH MATERIALIZED VIEW account_balances;
-    RETURN NULL;
-END
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trigger_fix_balance_account_transaction
-    AFTER INSERT
-        OR UPDATE OF amount, credit_account_id, debit_account_id
-        OR DELETE OR TRUNCATE
-    ON account_transaction
-    FOR EACH STATEMENT
-EXECUTE PROCEDURE update_balances();
-
-CREATE TRIGGER trigger_fix_balance_account
-    AFTER INSERT
-        OR UPDATE OF id
-        OR DELETE OR TRUNCATE
-    ON account
-    FOR EACH STATEMENT
-EXECUTE PROCEDURE update_balances();
+-- Comments regarding 1000 TPS:
+-- This schema shifts the "Current Balance" calculation from a Materialized View (expensive refresh)
+-- to a Row Update (cheap, strictly serializable per account).
+-- To move money:
+-- BEGIN;
+--   SELECT * FROM account WHERE id IN (debit_id, credit_id) FOR UPDATE; -- Lock rows
+--   UPDATE account SET balance = balance - X WHERE id = debit_id;
+--   UPDATE account SET balance = balance + X WHERE id = credit_id;
+--   INSERT INTO account_transaction ...;
+--   INSERT INTO outbox_event ...;
+-- COMMIT;
