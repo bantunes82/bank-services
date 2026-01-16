@@ -21,6 +21,9 @@
     </developers>
 	<properties>
 		<java.version>25</java.version>
+		<gatling.version>3.9.5</gatling.version>
+		<gatling.maven.plugin.version>4.3.4</gatling.maven.plugin.version>
+		<debezium.version>3.3.2.Final</debezium.version>
 	</properties>
 	<dependencies>
         <dependency>
@@ -68,17 +71,17 @@
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-api</artifactId>
-            <version>3.3.2.Final</version>
+            <version>${debezium.version}</version>
         </dependency>
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-embedded</artifactId>
-            <version>3.3.2.Final</version>
+			<version>${debezium.version}</version>
         </dependency>
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-connector-postgres</artifactId>
-            <version>3.3.2.Final</version>
+			<version>${debezium.version}</version>
         </dependency>
 
 
@@ -108,6 +111,26 @@
             <artifactId>spring-boot-starter-kafka-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Gatling -->
+        <dependency>
+            <groupId>io.gatling.highcharts</groupId>
+            <artifactId>gatling-charts-highcharts</artifactId>
+			<version>${gatling.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.gatling</groupId>
+            <artifactId>gatling-app</artifactId>
+			<version>${gatling.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.gatling</groupId>
+            <artifactId>gatling-recorder</artifactId>
+			<version>${gatling.version}</version>
+            <scope>test</scope>
+        </dependency>
 	</dependencies>
 
 	<build>
@@ -116,6 +139,14 @@
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
+            <plugin>
+                <groupId>io.gatling</groupId>
+                <artifactId>gatling-maven-plugin</artifactId>
+                <version>${gatling.maven.plugin.version}</version>
+                <configuration>
+                    <simulationClass>com.bantunes82.ledger.gatling.TransactionSimulation</simulationClass>
+                </configuration>
+            </plugin>
 		</plugins>
 	</build>
 
