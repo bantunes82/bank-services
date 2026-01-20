@@ -16,17 +16,18 @@ import java.util.stream.Stream;
 public class TransactionSimulation extends Simulation {
 
     HttpProtocolBuilder httpProtocol = http
-            .baseUrl(System.getProperty("baseUrl", "http://localhost:8081"))
+            .baseUrl("http://localhost:8081")
             .acceptHeader("application/json")
-            .contentTypeHeader("application/json");
+            .contentTypeHeader("application/json")
+            .userAgentHeader("Gatling/Performance Test");
 
     // Seeded accounts
     String debitAccountId = "c3b3b3f0-9b6b-4b1f-8b3f-7b1b3b1f0b3c"; // Bruno
     String creditAccountId = "a7b7b3f0-9b6b-4b1f-8b3f-7b1b3b1f0b3a"; // Jose
 
-    Iterator<Map<String, Object>> feeder = Stream.generate((Supplier<Map<String, Object>>) () -> {
-        return Map.of("idempotencyKey", UUID.randomUUID().toString());
-    }).iterator();
+    Iterator<Map<String, Object>> feeder = Stream.generate((Supplier<Map<String, Object>>) () ->
+         Map.of("idempotencyKey", UUID.randomUUID().toString())
+    ).iterator();
 
     ScenarioBuilder scn = scenario("Transaction Load Test")
             .feed(feeder)
@@ -39,7 +40,8 @@ public class TransactionSimulation extends Simulation {
                                     "\"idempotencyKey\": \"#{idempotencyKey}\", " +
                                     "\"description\": \"Load Test\" }"))
                     .asJson()
-                    .check(status().is(201)));
+                    .check(status().is(201))
+                    .check(header("Location").saveAs("location")));
 
     {
         setUp(
@@ -50,6 +52,11 @@ public class TransactionSimulation extends Simulation {
                         rampUsersPerSec(100).to(1000).during(Duration.ofSeconds(30)),
                         // Hold peak
                         constantUsersPerSec(1000).during(Duration.ofSeconds(30))))
-                .protocols(httpProtocol);
+                .protocols(httpProtocol)
+                .assertions(
+                        //maximum response time based on the setup should be less than or equal to 10 seconds
+                        global().responseTime().max().lte(10000),
+                        //percentage of successful requests should be greater than 90
+                        global().successfulRequests().percent().gt(90d));
     }
 }
