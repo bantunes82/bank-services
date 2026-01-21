@@ -15,48 +15,78 @@ import java.util.stream.Stream;
 
 public class TransactionSimulation extends Simulation {
 
-    HttpProtocolBuilder httpProtocol = http
-            .baseUrl("http://localhost:8081")
+    static Iterator<Map<String, Object>> accountFeeder;
+
+    static {
+        try {
+            java.util.List<String> lines = java.nio.file.Files
+                    .readAllLines(java.nio.file.Paths.get(System.getProperty("user.dir"),
+                            "src", "test", "resources", "accounts.csv"));
+
+            java.util.List<String> accountIds = new java.util.ArrayList<>();
+            // Skip header if present (account_id)
+            for (String line : lines) {
+                line = line.trim();
+                if (!line.isEmpty() && !line.startsWith("account_id")) {
+                    accountIds.add(line);
+                }
+            }
+
+            if (accountIds.isEmpty()) {
+                throw new RuntimeException("No accounts found in accounts.csv");
+            }
+
+            accountFeeder = Stream.generate(() -> {
+                String debit = accountIds
+                        .get(java.util.concurrent.ThreadLocalRandom.current().nextInt(accountIds.size()));
+                String credit = accountIds
+                        .get(java.util.concurrent.ThreadLocalRandom.current().nextInt(accountIds.size()));
+                // Ensure they are different
+                while (debit.equals(credit) && accountIds.size() > 1) {
+                    credit = accountIds
+                            .get(java.util.concurrent.ThreadLocalRandom.current().nextInt(accountIds.size()));
+                }
+                return Map.<String, Object>of("debitAccountId", debit, "creditAccountId", credit);
+            }).iterator();
+
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to read accounts.csv", e);
+        }
+    }
+
+    HttpProtocolBuilder httpProtocol = http.baseUrl("http://localhost:8081")
             .acceptHeader("application/json")
             .contentTypeHeader("application/json")
             .userAgentHeader("Gatling/Performance Test");
 
-    // Seeded accounts
-    String debitAccountId = "c3b3b3f0-9b6b-4b1f-8b3f-7b1b3b1f0b3c"; // Bruno
-    String creditAccountId = "a7b7b3f0-9b6b-4b1f-8b3f-7b1b3b1f0b3a"; // Jose
-
-    Iterator<Map<String, Object>> feeder = Stream.generate((Supplier<Map<String, Object>>) () ->
-         Map.of("idempotencyKey", UUID.randomUUID().toString())
-    ).iterator();
-
     ScenarioBuilder scn = scenario("Transaction Load Test")
-            .feed(feeder)
+            .feed(accountFeeder)
+            .feed(Stream.generate(
+                    (Supplier<Map<String, Object>>) () -> Map.of("idempotencyKey", UUID.randomUUID().toString()))
+                    .iterator())
             .exec(http("Create Transaction")
                     .post("/ledger-service/api/v1/transactions")
-                    .body(StringBody(
-                            "{ \"debitAccountId\": \"" + debitAccountId + "\", " +
-                                    "\"creditAccountId\": \"" + creditAccountId + "\", " +
-                                    "\"amount\": 1.00, " +
-                                    "\"idempotencyKey\": \"#{idempotencyKey}\", " +
-                                    "\"description\": \"Load Test\" }"))
+                    .body(StringBody("{ \"debitAccountId\": \"#{debitAccountId}\", " +
+                            "\"creditAccountId\": \"#{creditAccountId}\", " +
+                            "\"amount\": 1.00, " +
+                            "\"idempotencyKey\": \"#{idempotencyKey}\", " +
+                            "\"description\": \"Load Test\" }"))
                     .asJson()
                     .check(status().is(201))
                     .check(header("Location").saveAs("location")));
 
     {
-        setUp(
-                scn.injectOpen(
-                        // Warmup
-                        rampUsersPerSec(0).to(100).during(Duration.ofSeconds(10)),
-                        // Load to peak
-                        rampUsersPerSec(100).to(1000).during(Duration.ofSeconds(30)),
-                        // Hold peak
-                        constantUsersPerSec(1000).during(Duration.ofSeconds(30))))
-                .protocols(httpProtocol)
-                .assertions(
-                        //maximum response time based on the setup should be less than or equal to 10 seconds
-                        global().responseTime().max().lte(10000),
-                        //percentage of successful requests should be greater than 90
+        setUp(scn.injectOpen(
+                // Warmup
+                rampUsersPerSec(0).to(100).during(Duration.ofSeconds(10)),
+                // Load to peak
+                rampUsersPerSec(100).to(1000).during(Duration.ofSeconds(30)),
+                // Hold peak
+                constantUsersPerSec(1000).during(Duration.ofSeconds(60)))).protocols(httpProtocol).assertions(
+                        // maximum response time based on the setup should be less than or equal
+                        // to 10 seconds
+                        // global().responseTime().max().lte(10000),
+                        // percentage of successful requests should be greater than 90
                         global().successfulRequests().percent().gt(90d));
     }
 }

@@ -60,3 +60,5 @@ services:
       - "postgres"
       - "-c"
       - "wal_level=logical"
+      - "-c"
+      - "max_connections=1000"
